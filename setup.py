@@ -58,41 +58,47 @@ def download_file(url, destination):
 
 
 def download_and_extract_zip(url, destination_dir):
-    """Downloads a zip file and extracts its contents to the specified directory."""
+    """Downloads a zip file if not already present and extracts its contents to the specified directory if empty."""
     zip_filename = os.path.basename(url)
     temp_zip_path = Path(destination_dir).parent / zip_filename # Download to parent dir temporarily
 
+    # Check if destination directory is already populated
     if Path(destination_dir).exists() and any(Path(destination_dir).iterdir()):
-        print(f"Skipping download and extraction for {zip_filename}: {destination_dir} is not empty.")
+        print(f"Skipping download and extraction for {zip_filename}: {destination_dir} is already populated.")
         return
 
-    print(f"Downloading and extracting {zip_filename}...")
+    # If destination is empty or doesn't exist, proceed.
+    Path(destination_dir).mkdir(parents=True, exist_ok=True)
+
+    # Check if the zip file already exists locally
+    if not temp_zip_path.exists():
+        print(f"Downloading {zip_filename}...")
+        try:
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                total_size = int(r.headers.get('content-length', 0))
+                with open(temp_zip_path, 'wb') as f, tqdm(
+                    total=total_size, unit='iB', unit_scale=True, desc=zip_filename
+                ) as pbar:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+        except requests.exceptions.RequestException as e:
+            print(f"Error downloading {url}: {e}")
+            sys.exit(1)
+
+    print(f"Extracting {zip_filename} to {destination_dir}...")
     try:
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            total_size = int(r.headers.get('content-length', 0))
-            with open(temp_zip_path, 'wb') as f, tqdm(
-                total=total_size, unit='iB', unit_scale=True, desc=zip_filename
-            ) as pbar:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    pbar.update(len(chunk))
-
-        # Ensure the destination directory exists before extraction
-        Path(destination_dir).mkdir(parents=True, exist_ok=True)
-
         with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
             zip_ref.extractall(destination_dir)
         print(f"Successfully extracted {zip_filename} to {destination_dir}.")
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading {url}: {e}")
-        sys.exit(1)
     except zipfile.BadZipFile:
-        print(f"Error: Downloaded file {zip_filename} is not a valid zip file.")
+        print(f"Error: Downloaded file {zip_filename} is not a valid zip file. Please delete {temp_zip_path} and try again.")
         sys.exit(1)
     finally:
+        # Clean up the downloaded zip file after successful extraction
         if temp_zip_path.exists():
-            os.remove(temp_zip_path) # Clean up the downloaded zip file
+            os.remove(temp_zip_path)
 
 
 def run_command(command):
