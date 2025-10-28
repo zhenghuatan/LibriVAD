@@ -27,7 +27,7 @@ This repository contains the scripts necessary to generate the LibriVAD dataset,
     pip install -r requirements.txt
     ```
 
-2.  **Download Source Data:** Run the `setup.py` script and choose the LibriSpeech mirror closest to your location from `[EU, USA, CN]`. This will download the necessary splits of the LibriSpeech dataset.
+2.  **Download Source Data:** Run the `setup.py` script and choose the LibriSpeech mirror closest to your location from `[EU, USA, CN]`. This will download the necessary splits of the LibriSpeech dataset, as well as the `Forced_alignments` and `Noises` data from Hugging Face.
 
     *EU Example:*
     ```bash

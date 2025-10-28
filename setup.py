@@ -1,3 +1,5 @@
+# Author: Ioannis Stylianou
+# Date: September 2025
 # Setup script for downloading and preparing the LibriSpeech dataset, 
 # the LibriSpeechConcat dataset and their corresponding labels.
 
@@ -7,9 +9,14 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile 
 from pathlib import Path
 import requests
 from tqdm import tqdm
+
+# --- Hugging Face URLs for additional data ---
+FORCED_ALIGNMENTS_URL = "https://huggingface.co/datasets/LibriVAD/LibriVAD/resolve/main/Files/Forced_alignments.zip"
+NOISES_URL = "https://huggingface.co/datasets/LibriVAD/LibriVAD/resolve/main/Files/Noises.zip"
 
 
 # --- Configuration ---
@@ -48,6 +55,44 @@ def download_file(url, destination):
         if os.path.exists(destination):
             os.remove(destination)
         sys.exit(1)
+
+
+def download_and_extract_zip(url, destination_dir):
+    """Downloads a zip file and extracts its contents to the specified directory."""
+    zip_filename = os.path.basename(url)
+    temp_zip_path = Path(destination_dir).parent / zip_filename # Download to parent dir temporarily
+
+    if Path(destination_dir).exists() and any(Path(destination_dir).iterdir()):
+        print(f"Skipping download and extraction for {zip_filename}: {destination_dir} is not empty.")
+        return
+
+    print(f"Downloading and extracting {zip_filename}...")
+    try:
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            total_size = int(r.headers.get('content-length', 0))
+            with open(temp_zip_path, 'wb') as f, tqdm(
+                total=total_size, unit='iB', unit_scale=True, desc=zip_filename
+            ) as pbar:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+
+        # Ensure the destination directory exists before extraction
+        Path(destination_dir).mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            zip_ref.extractall(destination_dir)
+        print(f"Successfully extracted {zip_filename} to {destination_dir}.")
+    except requests.exceptions.RequestException as e:
+        print(f"Error downloading {url}: {e}")
+        sys.exit(1)
+    except zipfile.BadZipFile:
+        print(f"Error: Downloaded file {zip_filename} is not a valid zip file.")
+        sys.exit(1)
+    finally:
+        if temp_zip_path.exists():
+            os.remove(temp_zip_path) # Clean up the downloaded zip file
 
 
 def run_command(command):
@@ -103,6 +148,13 @@ def main():
     base_dir = Path(__file__).parent.resolve()
     flac_dir = base_dir / "Files" / "Datasets" / "Flac"
     scripts_dir = base_dir / "Scripts"
+
+    # --- Download and extract additional data (Forced Alignments and Noises) ---
+    forced_alignments_dir = base_dir / "Files" / "Forced_alignments"
+    noises_dir = base_dir / "Files" / "Noises"
+
+    download_and_extract_zip(FORCED_ALIGNMENTS_URL, forced_alignments_dir)
+    download_and_extract_zip(NOISES_URL, noises_dir)
     
     # Create the target directory if it doesn't exist
     flac_dir.mkdir(parents=True, exist_ok=True)
