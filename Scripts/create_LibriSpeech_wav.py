@@ -78,7 +78,7 @@ if __name__ == "__main__":
     wav_root_dir = base_dir / "LibriSpeech"
     
     # List the dataset splits to be processed.
-    splits = ["train-clean-100", "test-clean"]
+    splits = ["train-clean-100", "dev-clean", "test-clean"]
 
     for split in splits:
         print(f"\nConverting LibriSpeech {split} from flac to wav format")
