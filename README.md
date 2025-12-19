@@ -1,20 +1,3 @@
----
-license: apache-2.0
-language: en
-pretty_name: "LibriVAD"
-datasets:
-- librispeech
-- DEMAND
-- WHAM!
-- librivox
-tags:
-- audio
-- voice-activity-detection
-- vad
-- librispeech
-- noise-augmented
----
-
 # LibriVAD Dataset Generation
 
 This repository contains the scripts necessary to generate the LibriVAD dataset, a large-scale, noise-augmented dataset for Voice Activity Detection (VAD) based on the LibriSpeech corpus.
