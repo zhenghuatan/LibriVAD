@@ -38,4 +38,4 @@ The noise used for the generation of LibriVAD can be downloaded from https://hug
 
 ## Citation
 
-Ioannis Stylianou and Achintya kr. Sarkar and Nauman Dawalatabad and James Glass and Zheng-Hua Ta, "LibriVAD: A Scalable Open Dataset with Deep Learning Benchmarks for Voice Activity Detection," arXiv preprint arXiv:2512.17281 (2025). [url](https://arxiv.org/abs/2512.17281)
+I. Stylianou, A.K. Sarkar, N. Dawalatabad, J. Glass, and Z.-H. Tan, "LibriVAD: A Scalable Open Dataset with Deep Learning Benchmarks for Voice Activity Detection," arXiv preprint arXiv:2512.17281 (2025). [url](https://arxiv.org/abs/2512.17281)
