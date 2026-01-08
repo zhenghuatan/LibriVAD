@@ -1,5 +1,5 @@
-# ViT Code adapted from: https://github.com/lucidrains/vit-pytorch
-# Original ViT code Copyright (c) 2020 Phil Wang
+# The ViT part of the code is adapted from: https://github.com/lucidrains/vit-pytorch
+# The original ViT code Copyright (c) 2020 Phil Wang
 # Licensed under the MIT License
  
 
