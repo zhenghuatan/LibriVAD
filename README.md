@@ -36,7 +36,7 @@ This repository contains the scripts necessary to generate the LibriVAD dataset,
 
 The noise used for the generation of LibriVAD can be downloaded from https://huggingface.co/datasets/LibriVAD/LibriVAD/resolve/main/Files/Noises.zip
 
-Dataset Hugging Face page: https://huggingface.co/datasets/LibriVAD/LibriVAD/
+The trained models can also be found in the Hugging Face page: https://huggingface.co/datasets/LibriVAD/LibriVAD/
 
 ## Citation
 
