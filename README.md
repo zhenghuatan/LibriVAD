@@ -38,6 +38,9 @@ The noise used for the generation of LibriVAD can be downloaded from https://hug
 
 The trained models can also be found in the Hugging Face page: https://huggingface.co/datasets/LibriVAD/LibriVAD/
 
+## License
+This project is licensed under the MIT License.
+
 ## Citation
 
 I. Stylianou, A.K. Sarkar, N. Dawalatabad, J. Glass, and Z.-H. Tan, "LibriVAD: A Scalable Open Dataset with Deep Learning Benchmarks for Voice Activity Detection," arXiv preprint arXiv:2512.17281 (2025). [url](https://arxiv.org/abs/2512.17281)
