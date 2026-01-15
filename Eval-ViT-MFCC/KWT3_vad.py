@@ -1,7 +1,6 @@
-# The ViT part of the code is adapted from: https://github.com/lucidrains/vit-pytorch
-# The original ViT code Copyright (c) 2020 Phil Wang
+# The ViT part of the code is adapted from KWT:  https://github.com/wdjose/keyword-transformer/blob/master/models/kwt.py
+# The original ViT code Copyright (c) 2021 Williard Joshua Jose
 # Licensed under the MIT License
- 
 
 import torch
 import torch.nn.functional as F
