@@ -201,7 +201,7 @@ if __name__ == "__main__":
     create_LibriSpeechConcat(paths_train, silence_path)
 
     print("Preparing LibriSpeechConcat dev-clean...")
-    #create_LibriSpeechConcat(paths_val, silence_path)
+    create_LibriSpeechConcat(paths_val, silence_path)
 
     print("Preparing LibriSpeechConcat test-clean...")
     create_LibriSpeechConcat(paths_test, silence_path)
