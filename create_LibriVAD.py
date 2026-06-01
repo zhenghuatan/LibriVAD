@@ -210,7 +210,7 @@ def create_LibriVAD(dataset, dataset_dir, SNRs, Noises, split, size,
                     save_path = save_dir_path / file_path.name
                     wav.write(save_path, sr, output)
 
-    print("\Data generation completed!")
+    print("\nData generation completed!")
 
           
 if __name__ == "__main__":

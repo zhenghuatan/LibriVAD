@@ -15,6 +15,7 @@ import numpy as np
 import glob
 import os
 import sys
+import scipy.io.wavfile as wav
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tqdm import tqdm
@@ -25,28 +26,31 @@ sys.path.append(scripts_path)
 from Scripts import librispeech_functions as lf
 
 
-def _generate_label_from_timeframes(timeframes, words, sample_rate=16000):
+def _generate_label_from_timeframes(timeframes, words, target_samples, sample_rate=16000):
     """
     Helper function to generate a VAD label array from alignment data.
 
     Args:
         timeframes (np.array): Array of segment end times in seconds.
         words (list): List of corresponding words or text for each segment.
+        target_samples (int): The expected number of samples in the label.
         sample_rate (int): The sample rate of the audio.
 
     Returns:
         np.array: A binary (0 or 1) VAD label array of dtype np.int16.
     """
-    # If there are no timeframes, no label can be generated.
-    if timeframes.size == 0:
+    # If there are no target samples, return empty.
+    if target_samples <= 0:
         return np.array([], dtype=np.int16)
         
     # Initialize a label array of all ones (speech).
-    total_samples = int(timeframes[-1] * sample_rate)
-    label = np.ones(total_samples, dtype=np.int16)
+    label = np.ones(target_samples, dtype=np.int16)
 
-    # Find segments that are marked as silent. The textgrids library may return
-    # None for empty text fields, so we check for both possibilities.
+    if timeframes.size == 0:
+        # If no alignment is found, we assume the whole segment is silent.
+        return np.zeros(target_samples, dtype=np.int16)
+
+    # Find segments that are marked as silent.
     is_silent = [w == '' or w is None for w in words]
     silent_indices = np.where(is_silent)[0]
 
@@ -54,15 +58,21 @@ def _generate_label_from_timeframes(timeframes, words, sample_rate=16000):
     if silent_indices.size > 0:
         # Handle silence at the very beginning of the file.
         if silent_indices[0] == 0:
-            end_sample = int(timeframes[0] * sample_rate)
+            end_sample = min(int(timeframes[0] * sample_rate), target_samples)
             label[0:end_sample] = 0
         
         # Handle all other silent segments.
         for j in silent_indices:
             if j > 0: # The start time is the end time of the previous segment.
-                start_sample = int(timeframes[j-1] * sample_rate)
-                end_sample = int(timeframes[j] * sample_rate)
+                start_sample = min(int(timeframes[j-1] * sample_rate), target_samples)
+                end_sample = min(int(timeframes[j] * sample_rate), target_samples)
                 label[start_sample:end_sample] = 0
+    
+    # IMPORTANT: Handle trailing silence.
+    # Alignments often end before the actual audio file does.
+    last_word_end_sample = int(timeframes[-1] * sample_rate)
+    if last_word_end_sample < target_samples:
+        label[last_word_end_sample:] = 0
     
     return label
 
@@ -84,9 +94,10 @@ def create_label_for_file(wav_path_str, alignments_root_dir):
     
     if not is_concat:
         # --- Standard LibriSpeech file ---
+        sr, audio = wav.read(wav_path)
         timeframes, words = lf.find_timeframes(str(wav_path), str(Path(alignments_root_dir) / wav_path.parts[-4]))
 
-        label = _generate_label_from_timeframes(timeframes, words)
+        label = _generate_label_from_timeframes(timeframes, words, len(audio))
         
     else:
         # --- LibriSpeechConcat file ---
@@ -96,72 +107,82 @@ def create_label_for_file(wav_path_str, alignments_root_dir):
         part1_stem = concat_parts[0]
         part2_info = concat_parts[1]
 
-        # Reconstruct the path to the first source file.
-        # It is always in the same directory as the concatenated file.
-        file1 = wav_path.parent / f"{part1_stem}.wav"
+        # Reconstruct the path to the first source file by parsing its stem.
+        p1_parts = part1_stem.split('-')
+        p1_speaker = p1_parts[0]
+        p1_chapter = p1_parts[1]
+        
+        # Determine the split directory (e.g., dev-clean) from the output path.
+        split_dir_name = wav_path.parts[-4]
+        project_root = wav_path.parents[4]
+        librispeech_root = project_root / "LibriSpeech" / split_dir_name
+        
+        file1 = librispeech_root / p1_speaker / p1_chapter / f"{part1_stem}.wav"
 
         # Reconstruct the path to the second source file.
-        # The logic depends on the structure of the second part of the filename.
         part2_sub_parts = part2_info.split('-')
         len_parts2 = len(part2_sub_parts)
-        
-        # Grab the speaker ID from the current path (assumes .../speaker/chapter/file.wav)
         current_speaker = wav_path.parts[-3]
 
         if len_parts2 == 1:
              # Case 1: Same speaker, same chapter.
-             # e.g., 5694-64038-0003_+_0004.wav -> part2_info is "0004"
              current_chapter = wav_path.parts[-2]
              file2_stem = f"{current_speaker}-{current_chapter}-{part2_info}"
-             file2 = wav_path.parent / f"{file2_stem}.wav"
+             file2 = librispeech_root / current_speaker / current_chapter / f"{file2_stem}.wav"
 
         elif len_parts2 == 2:
              # Case 2: Same speaker, DIFFERENT chapter.
-             # e.g., 5694-64038-0003_+_64039-0004.wav -> part2_info is "64039-0004"
              new_chapter = part2_sub_parts[0]
-             # Go up one level from the current chapter to the speaker directory.
-             speaker_dir = wav_path.parent.parent
              file2_stem = f"{current_speaker}-{part2_info}"
-             file2 = speaker_dir / new_chapter / f"{file2_stem}.wav"
+             file2 = librispeech_root / current_speaker / new_chapter / f"{file2_stem}.wav"
 
         else:
              # Case 3: Different speaker entirely.
-             # e.g., 19-198-0049_+_23-2938-0000.wav -> part2_info is "23-2938-0001"
              new_speaker = part2_sub_parts[0]
              new_chapter = part2_sub_parts[1]
-             # Go up to the split directory (e.g., train-clean-100).
-             split_dir = wav_path.parent.parent.parent
-             file2 = split_dir / new_speaker / new_chapter / f"{part2_info}.wav"
+             file2 = librispeech_root / new_speaker / new_chapter / f"{part2_info}.wav"
 
-        # Generate labels for each of the two source files.
-        timeframes1, words1 = lf.find_timeframes(str(file1), str(Path(alignments_root_dir) / wav_path.parts[-4]))
-        label1 = _generate_label_from_timeframes(timeframes1, words1)
+        # Read source files to determine their exact length for duration matching.
+        try:
+            sr, wav1 = wav.read(file1)
+            sr, wav2 = wav.read(file2)
+        except Exception as e:
+            print(f"Error reading source files for {wav_path.name}: {e}")
+            return
+
+        # Generate labels for each of the two source files, padded to their actual duration.
+        align_split_dir = Path(alignments_root_dir) / split_dir_name
+        timeframes1, words1 = lf.find_timeframes(str(file1), str(align_split_dir))
+        label1 = _generate_label_from_timeframes(timeframes1, words1, len(wav1))
         
-        timeframes2, words2 = lf.find_timeframes(str(file2), str(Path(alignments_root_dir) / wav_path.parts[-4]))
-        label2 = _generate_label_from_timeframes(timeframes2, words2)
+        timeframes2, words2 = lf.find_timeframes(str(file2), str(align_split_dir))
+        label2 = _generate_label_from_timeframes(timeframes2, words2, len(wav2))
         
         # Create a silent segment (label 0) to place between the two labels.
-        inbetween_silence = np.zeros(int((len(label1) + len(label2)) / 4), dtype=np.int16)
+        inbetween_silence_len = int((len(wav1) + len(wav2)) / 4)
+        inbetween_silence = np.zeros(inbetween_silence_len, dtype=np.int16)
         
         # Combine the labels to form the final concatenated label.
         label = np.concatenate((label1, inbetween_silence, label2))
 
     # --- Save the generated label ---
     if label.size > 0:
-        # Construct the output path by replacing the dataset name with 'Labels'.
+        # Construct the output path by replacing 'Datasets' with 'Labels'.
         parts = list(wav_path.parts)
         try:
-            # Find the dataset folder name (e.g., 'LibriSpeech') and replace it.
-            # We look 5 levels up from the file to find the dataset root.
-            idx = parts.index(wav_path.parts[-5]) 
-            parts[idx-1] = "Labels"
-        except (ValueError, IndexError):
-            # Fallback for unexpected path structures.
+            idx = parts.index("Datasets")
+            parts[idx] = "Labels"
+        except ValueError:
             print(f"Warning: Could not determine save path correctly for {wav_path}")
             return
 
         # Create the final .npy file path.
         label_path = Path(*parts).with_suffix(".npy")
+        
+        # Ensure the destination directory exists.
+        label_path.parent.mkdir(parents=True, exist_ok=True)
+
+        np.save(label_path, label)
         
         # Ensure the destination directory exists.
         label_path.parent.mkdir(parents=True, exist_ok=True)
