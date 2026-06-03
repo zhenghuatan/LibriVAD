@@ -23,13 +23,15 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from auc_Vit import split_data_into_sequences, auc_acc
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 np.random.seed(0)
 torch.manual_seed(42)
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-if device == "cuda":
+is_cuda = device.type == 'cuda'
+if is_cuda:
     num_workers = 1
     pin_memory = True
 else:
@@ -209,7 +211,7 @@ def readBatchScp(batch_scp, num_cores, sequence_length):
                t1_array = np.array(t1, dtype=float)  # Ensure elements are numeric
                t2_value = t2  # Label is numeric or None
                if (t2_value is not None  and not np.any(np.isnan(t1_array)) and not np.any(np.isinf(t1_array)) and (not np.isnan(t2_value) if isinstance(t2_value, (int, float)) else True)  and (not np.isinf(t2_value) if isinstance(t2_value, (int, float)) else True)):
-                   X_sequences, y_sequences, t3, t3_seq = split_data_into_sequences(t1, t2, sequence_length)
+                   X_sequences, y_sequences, t3, t3_seq = split_data_into_sequences(t1, t2.T, sequence_length)
                    feat.append(X_sequences)
                    y_train.append(y_sequences)
         except: 
@@ -387,7 +389,8 @@ if  str(Trn) == "Train":
         et = datetime.datetime.now()
         trainingLoss = []
 
-        for i in range(0, len(trnScp), uBatch_size):  # utterance at a time (say)/batch
+        pbar_batch = tqdm(range(0, len(trnScp), uBatch_size), desc=f"Epoch {epoch+1}/{n_epoch} [Train]", leave=False)
+        for i in pbar_batch:  # utterance at a time (say)/batch
                   newidx = idx[i:i+uBatch_size]
                   # get files for the index of current batch
                   batch_scp = trnScp[newidx]
@@ -405,10 +408,13 @@ if  str(Trn) == "Train":
                          loss.backward()
                          optimizer.step()
                          trainingLoss.append(loss.detach().cpu().numpy())
+                  pbar_batch.set_postfix({'loss': np.mean(trainingLoss) if trainingLoss else 0})
+        
         scheduler.step()
         torch.save(model.state_dict(), open(os.path.join(model_dir + '/model_epoch_%d' % (epoch + 1) + '.model'), 'wb'))
         # Save checkpoint after each epoch
         save_checkpoint(epoch + 1, model, optimizer, np.mean(trainingLoss), model_dir, 1)
+        
         # Dev set
         model.eval()
         noises = [ "SSN_noise",  "Domestic_noise", "Nature_noise",  "Office_noise", "Public_noise", "Street_noise",  "Transport_noise",  "Babble_noise", "City_noise"]
@@ -422,22 +428,26 @@ if  str(Trn) == "Train":
         devscp.append(tmp)
         devscp = np.asmatrix(np.squeeze(np.concatenate(devscp, axis=0 )))
         devLoss = []
-        for i in range(0, len(devscp), uBatch_size):  # utterance at a time (say)/batch
+        
+        pbar_dev = tqdm(range(0, len(devscp), uBatch_size), desc=f"Epoch {epoch+1}/{n_epoch} [Dev]", leave=False)
+        for i in pbar_dev:  # utterance at a time (say)/batch
                   newidx = idx[i:i+uBatch_size]
                   # get files for the index of current batch
                   batch_scp = trnScp[newidx]
                   X_batch, y_train = readBatchScp(batch_scp, num_cores, sequence_length)
                   dev_dataset = CustomDataset_train(X_batch, y_train)
-                  devloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+                  devloader = DataLoader(dev_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
                   for batch, labels in devloader:
-                      optimizer.zero_grad()
                       if batch.shape[0] > 1:
                          labels = np.array(labels, int)
                          labels = torch.from_numpy(labels).to(device)
                          batch = batch.to(device)
-                         output = model(batch)
-                         devloss = criterion(output, labels.reshape(-1,1).squeeze(1)) #([51200]
-                         devLoss.append(devloss.detach().cpu().numpy())
+                         with torch.no_grad():
+                            output = model(batch)
+                            devloss = criterion(output, labels.reshape(-1,1).squeeze(1)) #([51200]
+                            devLoss.append(devloss.detach().cpu().numpy())
+                  pbar_dev.set_postfix({'dev_loss': np.mean(devLoss) if devLoss else 0})
+        
         print("%s epoch  %d --bsize %d -- --train-loss %.6f --dev-loss %.6f" %(et, epoch, batch_size,np.mean(trainingLoss), np.mean(devLoss)))
         fp.write("%s epoch  %d --bsize %d -- --train-loss %.6f --dev-loss %.6f\n" %(et, epoch, batch_size, np.mean(trainingLoss), np.mean(devLoss)))
         fp.flush()
@@ -467,7 +477,10 @@ elif  str(Trn) == "Test":
      print('Evalset scoring...')
      finename = model_dir + '/' + str(EvalRes) + '.testdata'
      finenameFrm = open(model_dir + '/' + str(EvalRes) + '.testdata.frm', 'w')
-     #Eval-data(noise dependent)
+     
+     # Eval-data(noise dependent)
+     total_test_configs = len(noises) * len(snr)
+     pbar_test = tqdm(total=total_test_configs, desc="Testing Noisy Data")
      for nx in noises:
          for db in snr:
              header.append([str(nx) + ',' + str(db)])
@@ -477,7 +490,10 @@ elif  str(Trn) == "Test":
              finenameFrm.flush()
              temp_score.append([muc1])
              tmp_acc.append([ACC1])
-     #clean data
+             pbar_test.update(1)
+     pbar_test.close()
+
+     # clean data
      tstscp =np.genfromtxt('test-clean/clean_clean.lst',dtype='str')
      muc1, ACC1, ndataP, thr,  fpr, tpr, score, label = auc_acc(tstscp, model,  device, sequence_length, 'True')
      temp_score.append([muc1])
@@ -579,12 +595,15 @@ elif str(Trn) == "Test_voices":
      mic = [ "mc01", "mc05" ]
      dist = [ "clo", "far" ]
      distract = [ "babb", "musi", "none", "tele" ]
+     
+     total_configs = len(room) * len(mic) * len(dist) * len(distract)
+     pbar_voices = tqdm(total=total_configs, desc="Testing Voices Data")
      for rm in room:
          for mik in mic: 
              for distant in dist:
                  for distr in distract:
                      try:
-                        print([str(rm) + '_' + str(mik) + '_' + str(distant) + '_' + str(distr)])
+                        # print([str(rm) + '_' + str(mik) + '_' + str(distant) + '_' + str(distr)])
                         tstscp = np.genfromtxt('list_voices/' + str(rm) + '_' + str(mik) + '_' + str(distant) + '_' + str(distr) + '.lst',dtype='str')
                         muc1, ACC1, ndataP, xyz, fpr, tpr, score, label = auc_acc(tstscp, model, device, sequence_length, 'True') #thr)
                         fp.write("%s, %d, %s, %f\n" %([str(rm) + '_' + str(mik) + '_' + str(distant) + '_' + str(distr)], len(tstscp), 'muc', muc1))
@@ -593,9 +612,11 @@ elif str(Trn) == "Test_voices":
                      except: 
                         file_path = 'list_voices/' + str(rm) + '_' + str(mik) + '_' + str(distant) + '_' + str(distr) + '.lst'
                         if not os.path.exists(file_path):
-                            print("File does not exist:", str(file_path))
+                            pass # print("File does not exist:", str(file_path))
                         elif os.path.getsize(file_path) == 0:
-                            print("File exists but is empty:", str(file_path))
+                            pass # print("File exists but is empty:", str(file_path))
+                     pbar_voices.update(1)
+     pbar_voices.close()
      #
      fp.close()
 
