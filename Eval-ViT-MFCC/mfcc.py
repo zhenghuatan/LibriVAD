@@ -11,7 +11,10 @@ import code, copy
 from auc_bdnn import enframe 
 import torch
 import scipy
-
+from tqdm import tqdm
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 
 def mfcc(file_wav, winlen, ovrlen, pre_coef, nfilter, nftt, no_coef):
     #	S. Davis ; P. Mermelstein, "Comparison of parametric representations for monosyllabic word recognition in continuously spoken sentences", IEEE Transactions on Acoustics, Speech, and Signal Processing ( Volume: 28, Issue: 4, Aug 1980 )
@@ -40,7 +43,7 @@ def mfcc(file_wav, winlen, ovrlen, pre_coef, nfilter, nftt, no_coef):
      #speech/non-speech votting samples
      max_votes = scipy.stats.mode(y, axis=1)
      max_voters_pred = max_votes[0]
-     max_voters_pred = np.asmatrix(max_voters_pred).T
+     max_voters_pred = np.asmatrix(max_voters_pred)
 
      if numpy.size(speech, axis=0) != numpy.size(Espeech, axis=0):
         print("Mismatch frame numbers for  enegry and feature vectors")
@@ -161,6 +164,30 @@ def cmvn(numpy_array):
      Z = (numpy_array - _mean)/_std
 
      return Z
+     
+     
+def process_single_file(x, winlen, ovrlen, pre_coef, nfilter, nftt, no_coef):
+    """
+    Wrapper function to process a single file. Required for multiprocessing.
+    """
+    try:
+        feat, Label = mfcc(x, winlen, ovrlen, pre_coef, nfilter, nftt, no_coef)
+        feat = cmvn (feat) # zero-mean unit variance normalization
+        
+        # Convert to torch format
+        feat  = torch.FloatTensor(feat)
+        Label = torch.FloatTensor(Label)
+        
+        # Save files
+        feat_path = x.split(",")[2].strip('\n')+".pt"
+        label_path = x.split(",")[2].strip('\n')+".lab.pt"
+        
+        torch.save(feat, feat_path)
+        torch.save(Label, label_path)
+        return True
+    except Exception as e:
+        print(f"\nError processing file {x}: {e}")
+        return False
 
 
 
@@ -170,16 +197,22 @@ if __name__ == '__main__':
    #[window size (sec)], [frame shift(sec)], [pre-emp coeff],
 
    scp = np.genfromtxt(sys.argv[1],dtype='str')
-   for x in scp:
-     #print(x)  
-     feat, Label = mfcc(x, winlen, ovrlen, pre_coef, nfilter, nftt, no_coef)
-     feat = cmvn (feat) # zero-mean unit variance normalization
-     feat  = torch.FloatTensor(feat)
-     Label = torch.FloatTensor(Label)
-     #write in torch format
-     torch.save(feat, x.split(",")[2].strip('\n')+".pt")
-     torch.save(Label, x.split(",")[2].strip('\n')+".lab.pt")
+   
+   num_workers = max(1, multiprocessing.cpu_count() - 1)
+   print(f"Using {num_workers} CPU cores for extraction...")
 
+   # Create a partial function that pre-fills all the settings so we only have to pass 'x'
+   worker_func = partial(process_single_file, winlen=winlen, ovrlen=ovrlen, 
+                         pre_coef=pre_coef, nfilter=nfilter, nftt=nftt, no_coef=no_coef)
+
+   # Run multiprocessing with tqdm
+   with ProcessPoolExecutor(max_workers=num_workers) as executor:
+       # Submit all tasks
+       futures = [executor.submit(worker_func, x) for x in scp]
+       
+       # Use tqdm to track completed tasks as they finish
+       for future in tqdm(as_completed(futures), total=len(scp), desc="Extracting MFCCs", unit="file"):
+           future.result()  # This will catch any errors raised inside the process
 
 
 

@@ -12,7 +12,6 @@ clnwav=../Files/Datasets/${database}
 Feat=feat_${database}
 
 rm -f *.txt *.lst 
-rm -f wav.lst # Ensure we start fresh
 
 # Generate lists for all phases: training, development, and testing
 for phase in train-clean-100 dev-clean test-clean; do
@@ -22,39 +21,71 @@ for phase in train-clean-100 dev-clean test-clean; do
     cat phase_wav.lst >> wav.lst # Accumulate all wavs for MFCC extraction
       
     rm -rf ${phase}; mkdir -p ${phase}
+    
+    # --- 1. NOISY FILES LOOP ---
     for tx in SSN_noise Domestic_noise Nature_noise Office_noise Public_noise \
               Street_noise Transport_noise Babble_noise City_noise; do
         for db in -5 0 5 10 15 20; do
-            # Build the list of noisy files and their corresponding labels
-            for xin in `find ${wav}/${phase}/${tx}/${db} -name "*.wav"`; do
-                id=`echo $xin | awk -F '/' '{print $NF}' | sed 's|\.wav||g'`
-                ft=`echo $xin | sed 's|\.wav||g' | sed 's|^|'${Feat}/'|g'`
-                # Match noisy file with its label and feature path
-                grep "/${id}.npy" lab_temp | awk -v y=$xin -v ft=$ft '{print y","$1","ft}' >> ${phase}.lst
-                if [ "$phase" != "train-clean-100" ]; then
-                    grep "/${id}.npy" lab_temp | awk -v y=$xin -v ft=$ft '{print y","$1","ft}' >> ${phase}/${tx}_${db}.lst
-                fi
-            done
+            
+            # Pipe all wav files into awk and process them simultaneously
+            find ${wav}/${phase}/${tx}/${db} -name "*.wav" 2>/dev/null | awk -v feat="${Feat}" '
+            NR==FNR {
+                # Read lab_temp into memory
+                n=split($0, a, "/"); id=a[n]; sub(/\.npy$/, "", id);
+                lab[id] = $0;
+                next;
+            }
+            {
+                # Match noisy wav streams against the labels in memory
+                wavpath=$0; n=split(wavpath, a, "/"); id=a[n]; sub(/\.wav$/, "", id);
+                if (id in lab) {
+                    ft = feat "/" wavpath; sub(/\.wav$/, "", ft);
+                    print wavpath "," lab[id] "," ft;
+                }
+            }' lab_temp - > tmp_list.lst
+            
+            cat tmp_list.lst >> ${phase}.lst
+            if [ "$phase" != "train-clean-100" ]; then
+                cat tmp_list.lst >> ${phase}/${tx}_${db}.lst
+            fi
+            rm -f tmp_list.lst
         done
     done
 
-    # Handle clean data for the current phase
-    for x in `awk -F ',' '{print $1}' ${phase}.lst | awk -F '/' '{print $NF}' | sort | uniq | sed 's|\.wav||g'`; do
-        wfile=`grep "/${x}.wav" phase_wav.lst`
-        ft=`echo $wfile | sed 's|\.wav||g' | sed 's|^|'${Feat}/'|g'`
-        grep "/${x}.npy" lab_temp | awk -v y=$wfile -v ft=$ft '{print y","$1","ft}' >> ${phase}.clean.lst
-    done    
-    sort ${phase}.clean.lst | uniq > xyz ; mv xyz ${phase}.clean.lst
-
-    # Finalize phase lists
+    # --- 2. CLEAN FILES LOOP ---
+    awk -v feat="${Feat}" -v phaselist="${phase}.lst" '
+    # 1st file: Load all labels into memory
+    FILENAME=="lab_temp" {
+        n=split($0, a, "/"); id=a[n]; sub(/\.npy$/, "", id);
+        lab[id] = $0;
+        next;
+    }
+    # 2nd file: Load the allowed IDs from the small-case noisy files
+    FILENAME==phaselist {
+        split($0, parts, ",");
+        n=split(parts[1], a, "/"); id=a[n]; sub(/\.wav$/, "", id);
+        wanted[id] = 1;
+        next;
+    }
+    # 3rd file: Process the clean wavs, strictly applying the filter
+    FILENAME=="phase_wav.lst" {
+        wavpath=$0; n=split(wavpath, a, "/"); id=a[n]; sub(/\.wav$/, "", id);
+        # Only add the clean file if it was used in the noisy dataset AND has a label
+        if ((id in wanted) && (id in lab)) {
+            ft = feat "/" wavpath; sub(/\.wav$/, "", ft);
+            print wavpath "," lab[id] "," ft;
+        }
+    }' lab_temp ${phase}.lst phase_wav.lst | sort | uniq > ${phase}.clean.lst
+    
+    # --- Finalize phase lists ---
     if [ "$phase" == "train-clean-100" ]; then
         # Implementation of "Unseen Noise" protocol for training
         for unseen in Babble_noise SSN_noise Domestic_noise; do
-            grep -v "${unseen}" train-clean-100.lst > xyz
-            mv xyz train-clean-100.lst
+            grep -v "${unseen}" ${phase}.lst > xyz
+            mv xyz ${phase}.lst
         done     
-        cp train-clean-100.lst DNN.trn.scp
-        cat train-clean-100.clean.lst >> DNN.trn.scp
+        cp ${phase}.lst DNN.trn.scp
+        cat ${phase}.clean.lst >> DNN.trn.scp
         sort DNN.trn.scp | uniq > xyz; mv xyz DNN.trn.scp
     elif [ "$phase" == "dev-clean" ]; then
         mv ${phase}.clean.lst ${phase}/clean_clean.lst
@@ -77,7 +108,7 @@ awk -F ',' '{print $NF}' wav.lst 2>/dev/null | sed 's|\(.*\)/.*|\1|' | sort | un
 python mfcc.py wav.lst
 
 # Step 2: Loop through model sizes (Small, Medium, Large)
-for size in small medium large; do
+for size in small; do
     Nepoch=50
     if [ $size == "small" ]; then
         ExpDir=small-models/${trndatabase}_vit_MFCC
@@ -85,7 +116,6 @@ for size in small medium large; do
         ExpDir=medium-models/${trndatabase}_vit_MFCC
     elif [ $size == "large" ]; then 
         ExpDir=large-models/${trndatabase}_vit_MFCC    
-        Nepoch=49
     fi
 
     echo "--- Training $size model ---"

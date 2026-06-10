@@ -3,8 +3,14 @@ Files/Datasets/
 Files/Forced_alignments/
 Files/Noises/
 Files/Labels/
+Files/Labels_old/
 Results/
 Results_large/
 upload_librivad_dataset.py
 validate.py
 reset.sh
+Eval-ViT-MFCC/chapter_change_vad_old.png
+Eval-ViT-MFCC/Files/Datasets/LibriSpeech/train-clean-100/103/1240/103-1240-0000.lab.pt
+Eval-ViT-MFCC/Files/Datasets/LibriSpeech/train-clean-100/103/1240/103-1240-0000.pt
+Eval-ViT-MFCC/Scripts/plot_vad.py
+Eval-ViT-MFCC/DNN.trn.scp

@@ -211,7 +211,7 @@ def readBatchScp(batch_scp, num_cores, sequence_length):
                t1_array = np.array(t1, dtype=float)  # Ensure elements are numeric
                t2_value = t2  # Label is numeric or None
                if (t2_value is not None  and not np.any(np.isnan(t1_array)) and not np.any(np.isinf(t1_array)) and (not np.isnan(t2_value) if isinstance(t2_value, (int, float)) else True)  and (not np.isinf(t2_value) if isinstance(t2_value, (int, float)) else True)):
-                   X_sequences, y_sequences, t3, t3_seq = split_data_into_sequences(t1, t2.T, sequence_length)
+                   X_sequences, y_sequences, t3, t3_seq = split_data_into_sequences(t1, t2, sequence_length)
                    feat.append(X_sequences)
                    y_train.append(y_sequences)
         except: 
@@ -369,6 +369,7 @@ n_epoch = int(np.loadtxt('epoch.txt'))
 
 
 if  str(Trn) == "Train":
+
     trnScp = np.genfromtxt('DNN.trn.scp', dtype='str')
     print('number of training files: ', trnScp.shape[0])
     uBatch_size = 10000
@@ -376,6 +377,8 @@ if  str(Trn) == "Train":
     start_epoch = 0
     total_epochs = n_epoch
     model, optimizer, start_epoch, loss = load_checkpoint(model, optimizer, model_dir)
+    scaler = torch.cuda.amp.GradScaler()
+
     if start_epoch ==0:
        fp = open(fname,"w")
     else:
@@ -396,18 +399,37 @@ if  str(Trn) == "Train":
                   batch_scp = trnScp[newidx]
                   X_batch, y_train = readBatchScp(batch_scp, num_cores, sequence_length)
                   train_dataset = CustomDataset_train(X_batch, y_train)
-                  trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+                  trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, 
+                                            num_workers=4)
                   for batch, labels in trainloader:
                       optimizer.zero_grad()
                       if batch.shape[0] > 1:
+                          batch = batch.to(device)
+                          labels = labels.to(device, dtype=torch.long)                    
+                          # --- NEW AMP BLOCK ---                        
+                          with torch.autocast(device_type='cuda', dtype=torch.float16):
+                              output = model(batch)
+                              loss = criterion(output, labels.view(-1))
+                          
+                          # Scale loss and step
+                          scaler.scale(loss).backward()
+                          scaler.step(optimizer)
+                          scaler.update()
+                          # ---------------------
+
+                          trainingLoss.append(loss.detach().cpu().item())
+                          """
                          labels = np.array(labels, int)
                          labels = torch.from_numpy(labels).to(device)
+                         
                          batch = batch.to(device)
                          output = model(batch)
                          loss = criterion(output, labels.reshape(-1,1).squeeze(1)) #([51200]
                          loss.backward()
                          optimizer.step()
                          trainingLoss.append(loss.detach().cpu().numpy())
+                         """
+                         
                   pbar_batch.set_postfix({'loss': np.mean(trainingLoss) if trainingLoss else 0})
         
         scheduler.step()
