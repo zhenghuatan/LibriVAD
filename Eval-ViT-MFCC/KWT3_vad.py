@@ -261,7 +261,7 @@ def predict(outputs):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def save_checkpoint(epoch, model, optimizer, loss, checkpoint_dir='checkpoints', max_checkpoints=5):
+def save_checkpoint(epoch, model, optimizer, scheduler, loss, checkpoint_dir='checkpoints', max_checkpoints=5):
     # Ensure the checkpoint directory exists
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
@@ -274,6 +274,7 @@ def save_checkpoint(epoch, model, optimizer, loss, checkpoint_dir='checkpoints',
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
         'loss': loss
     }
     torch.save(checkpoint, checkpoint_filename)
@@ -291,7 +292,9 @@ def save_checkpoint(epoch, model, optimizer, loss, checkpoint_dir='checkpoints',
             os.remove(os.path.join(checkpoint_dir, old_checkpoint))
             print("Removed old checkpoint:", old_checkpoint)
 
-def load_checkpoint(model, optimizer, checkpoint_dir='checkpoints'):
+def load_checkpoint(model, optimizer, scheduler, checkpoint_dir='checkpoints'):
+    
+    import warnings
     checkpoint_files = sorted(
         [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')],
         key=lambda f: os.path.getmtime(os.path.join(checkpoint_dir, f))
@@ -299,7 +302,7 @@ def load_checkpoint(model, optimizer, checkpoint_dir='checkpoints'):
 
     if not checkpoint_files:
         print("No checkpoint found, starting from scratch.")
-        return model, optimizer, 0, None
+        return model, optimizer, scheduler, 0, None
 
     latest_checkpoint = checkpoint_files[-1]
     checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
@@ -309,9 +312,24 @@ def load_checkpoint(model, optimizer, checkpoint_dir='checkpoints'):
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     loss = checkpoint['loss']
+    
+    # Load scheduler state if it exists
+    if 'scheduler_state_dict' in checkpoint:
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        print("Scheduler state cleanly restored from checkpoint.")
+    # Otherwise, manually fast-forward the newly initialized scheduler (for your 6-day old run!)
+    else:
+        print(f"Old checkpoint detected! Manually fast-forwarding the scheduler to epoch {epoch}...")
+        # We catch warnings because PyTorch will complain that we are stepping the 
+        # scheduler without stepping the optimizer. We can safely ignore that here.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for _ in range(epoch):
+                scheduler.step()
+        print("Scheduler fast-forward complete.")
 
     print("Checkpoint loaded from", checkpoint_path, ": Resuming from epoch", epoch)
-    return model, optimizer, epoch, loss
+    return model, optimizer, scheduler, epoch, loss
 
 
 # Hyperparameters
@@ -376,7 +394,7 @@ if  str(Trn) == "Train":
     fname = model_dir  + '/training_loss.txt'
     start_epoch = 0
     total_epochs = n_epoch
-    model, optimizer, start_epoch, loss = load_checkpoint(model, optimizer, model_dir)
+    model, optimizer, scheduler, start_epoch, loss = load_checkpoint(model, optimizer, scheduler, model_dir)
     scaler = torch.cuda.amp.GradScaler()
 
     if start_epoch ==0:
@@ -384,7 +402,7 @@ if  str(Trn) == "Train":
     else:
        fp = open(fname,"a+")
 
-    for epoch in range(0, n_epoch):
+    for epoch in range(start_epoch, n_epoch):
         model.train()
         # shuffle the data
         idx = np.arange(0, len(trnScp))
@@ -406,7 +424,7 @@ if  str(Trn) == "Train":
                       if batch.shape[0] > 1:
                           batch = batch.to(device)
                           labels = labels.to(device, dtype=torch.long)                    
-                          # --- NEW AMP BLOCK ---                        
+
                           with torch.autocast(device_type='cuda', dtype=torch.float16):
                               output = model(batch)
                               loss = criterion(output, labels.view(-1))
@@ -415,7 +433,6 @@ if  str(Trn) == "Train":
                           scaler.scale(loss).backward()
                           scaler.step(optimizer)
                           scaler.update()
-                          # ---------------------
 
                           trainingLoss.append(loss.detach().cpu().item())
                           """
@@ -435,7 +452,7 @@ if  str(Trn) == "Train":
         scheduler.step()
         torch.save(model.state_dict(), open(os.path.join(model_dir + '/model_epoch_%d' % (epoch + 1) + '.model'), 'wb'))
         # Save checkpoint after each epoch
-        save_checkpoint(epoch + 1, model, optimizer, np.mean(trainingLoss), model_dir, 1)
+        save_checkpoint(epoch + 1, model, optimizer, scheduler, np.mean(trainingLoss), model_dir, 1)
         
         # Dev set
         model.eval()
