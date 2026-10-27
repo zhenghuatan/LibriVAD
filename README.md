@@ -43,4 +43,4 @@ This project is licensed under the MIT License.
 
 ## Citation
 
-I. Stylianou, A.K. Sarkar, N. Dawalatabad, J. Glass, and Z.-H. Tan, "LibriVAD: A Scalable Open Dataset with Deep Learning Benchmarks for Voice Activity Detection," arXiv preprint arXiv:2512.17281 (2025). [url](https://arxiv.org/abs/2512.17281)
+I. Stylianou, A.K. Sarkar, N. Dawalatabad, J. Glass, and Z.-H. Tan, "LibriVAD: A scalable open dataset with deep learning benchmarks for Robust Voice Activity Detection," Computer Speech & Language, vol. 102, 2027. [url](https://www.sciencedirect.com/science/article/pii/S0885230826001063)
